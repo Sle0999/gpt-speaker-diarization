@@ -1,18 +1,15 @@
-import os
-
-import openai
 import tiktoken
+from openai import OpenAI, RateLimitError
 
 from .openai_decorator import retry_on_openai_errors
 
-# Set the OpenAI API key using an environment variable or a default value
-openai.api_key = os.environ.get(
-    "OPENAI_API_KEY", ""
-)
-
 
 class AI:
-    def __init__(self, encoding_model: str = "cl100k_base", openai_model: str = "gpt-4"):
+    def __init__(
+        self,
+        encoding_model: str = "cl100k_base",
+        openai_model: str = "gpt-4o-mini",
+    ):
         """
         Initialize an AI instance.
 
@@ -22,6 +19,7 @@ class AI:
         """
         self.tt_encoding = tiktoken.get_encoding(encoding_model)
         self.openai_model = openai_model
+        self.client = OpenAI()
 
     def token_counter(self, passage):
         """
@@ -38,7 +36,7 @@ class AI:
         return total_tokens
 
     @retry_on_openai_errors(max_retry=7)
-    def extract_dialogue(self, transcript, history=[]):
+    def extract_dialogue(self, transcript, history=None):
         """
         Extract dialogue involving multiple speaker from text.
 
@@ -58,7 +56,7 @@ class AI:
         while True:
             try:
                 if history:
-                    messages = history
+                    messages = list(history)
                 else:
                     messages = [
                         {"role": "system", "content": prompt},
@@ -67,9 +65,12 @@ class AI:
                                 "content": transcript.replace('\n', '')}
                 messages.append(user_message)
                 tokens_per_message = 4
-                max_token = 8191 - (self.token_counter(prompt) + self.token_counter(
-                    transcript) + (len(messages)*tokens_per_message) + 3)
-                response = openai.ChatCompletion.create(
+                prompt_tokens = self.token_counter(prompt)
+                transcript_tokens = self.token_counter(transcript)
+                overhead_tokens = (len(messages) * tokens_per_message) + 3
+                available_tokens = 8191 - (prompt_tokens + transcript_tokens + overhead_tokens)
+                max_token = max(1, min(4096, available_tokens))
+                response = self.client.chat.completions.create(
                     model=self.openai_model,
                     messages=messages,
                     max_tokens=max_token,
@@ -78,10 +79,9 @@ class AI:
                     presence_penalty=0,
                     frequency_penalty=0,
                 )
-                bot_response = response["choices"][0]["message"]["content"].strip(
-                )
+                bot_response = response.choices[0].message.content.strip()
                 return bot_response
 
-            except openai.error.RateLimitError:
+            except RateLimitError:
                 messages.pop(1)
                 continue

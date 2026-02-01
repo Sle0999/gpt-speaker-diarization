@@ -55,8 +55,7 @@ def process_audio(audio_data: bytes, filename: str):
     audio_output_path = write_audio(audio_data, filename)
     file_size_mb = get_file_size_in_mb(audio_output_path)
     if file_size_mb > 25:
-        wav_segments = whisper_api.audio_process(
-            audio_output_path, is_byte=True)
+        wav_segments = whisper_api.audio_process(audio_output_path)
         transcript = []
         for segments in wav_segments:
             transcript.append(whisper_api.transcribe(segments))

@@ -1,12 +1,19 @@
 import functools
 import time
 
-import openai.error
+from openai import (
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    BadRequestError,
+    InternalServerError,
+    RateLimitError,
+)
 
 
 def retry_on_openai_errors(max_retry):
     """
-    this function retries the function that it decorates in case of openai errors (RateLimitError, Timeout, APIError, APIConnectionError, ServiceUnavailableError, InvalidRequestError)`
+    this function retries the function that it decorates in case of openai errors (RateLimitError, Timeout, APIError, APIConnectionError, InternalServerError, BadRequestError)`
     :param max_retry: the maximum number of retries
     :return: the decorator
     """
@@ -17,9 +24,14 @@ def retry_on_openai_errors(max_retry):
             while retry < max_retry:
                 try:
                     return func(*args, **kwargs)
-                except (openai.error.Timeout, openai.error.APIError,
-                        openai.error.APIConnectionError, openai.error.ServiceUnavailableError,
-                        openai.error.InvalidRequestError) as error:
+                except (
+                    APITimeoutError,
+                    APIError,
+                    APIConnectionError,
+                    InternalServerError,
+                    BadRequestError,
+                    RateLimitError,
+                ) as error:
                     retry += 1
                     time.sleep(0.006)
                     print(f"Retrying {retry} time due to error: {error}")
