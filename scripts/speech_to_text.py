@@ -1,17 +1,13 @@
+import io
 import os
 import uuid
 
 import auditok
-import openai
+from openai import OpenAI
 import soundfile as sf
 
 from .openai_decorator import retry_on_openai_errors
 from .utils import get_project_root
-
-# Set the OpenAI API key from environment variable or use a default key
-openai.api_key = os.environ.get(
-    "OPENAI_API_KEY", ""
-)
 
 
 class Whisper:
@@ -19,7 +15,11 @@ class Whisper:
     This class serves as a wrapper for the OpenAI Whisper API to facilitate chatbot responses.
     """
 
-    def __init__(self, model_name: str = "whisper-1", whisper_sample_rate: int = 16000):
+    def __init__(
+        self,
+        model_name: str = "gpt-4o-mini-transcribe",
+        whisper_sample_rate: int = 16000,
+    ):
         """
         Initialize the Whisper chatbot instance.
 
@@ -28,6 +28,7 @@ class Whisper:
         """
         self.model_name = model_name
         self.whisper_sample_rate = whisper_sample_rate
+        self.client = OpenAI()
 
     def vad_audiotok(self, audio_content):
         """
@@ -59,9 +60,10 @@ class Whisper:
         if not is_byte:
             with open(wav_path, 'rb') as f:
                 wav_bytes = f.read()
+            wav, sr = sf.read(wav_path)
         else:
             wav_bytes = wav_path
-        wav, sr = sf.read(wav_path)
+            wav, sr = sf.read(io.BytesIO(wav_bytes))
         audio_regions = self.vad_audiotok(wav_bytes)
         wav_segments = []
         for r in audio_regions:
@@ -79,19 +81,24 @@ class Whisper:
         :param audio_file: Path to the audio file or audio bytes.
         :return: Transcription text from the audio.
         """
-        # Save audio bytes as a temporary WAV file
         root_path = get_project_root()
-        temp_wav_path = f"{root_path}/resources/audios/{str(uuid.uuid4())}.mp3"
-        with sf.SoundFile(temp_wav_path, 'wb', samplerate=self.whisper_sample_rate, channels=1) as f:
+        resources_path = f"{root_path}/resources/audios"
+        temp_wav_path = f"{resources_path}/{str(uuid.uuid4())}.wav"
+        with sf.SoundFile(
+            temp_wav_path,
+            'wb',
+            samplerate=self.whisper_sample_rate,
+            channels=1,
+        ) as f:
             f.write(audio_file)
 
-        auf = open(temp_wav_path, 'rb')
-        # Transcribe using OpenAI API
-        response = openai.Audio.transcribe(
-            self.model_name, auf)
-        # Clean up temporary file
+        with open(temp_wav_path, 'rb') as audio_stream:
+            response = self.client.audio.transcriptions.create(
+                model=self.model_name,
+                file=audio_stream,
+            )
         os.remove(temp_wav_path)
-        return response['text']
+        return response.text
 
     @retry_on_openai_errors(max_retry=7)
     def transcribe_raw(self, audio_file):
@@ -101,11 +108,12 @@ class Whisper:
         :param audio_file: Path to the audio file or audio bytes.
         :return: Transcription text from the audio.
         """
-        auf = open(audio_file, 'rb')
-        # Transcribe using OpenAI API
-        response = openai.Audio.transcribe(
-            self.model_name, auf)
-        return response['text']
+        with open(audio_file, 'rb') as audio_stream:
+            response = self.client.audio.transcriptions.create(
+                model=self.model_name,
+                file=audio_stream,
+            )
+        return response.text
 
 
 if __name__ == "__main__":
