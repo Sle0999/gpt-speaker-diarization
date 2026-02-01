@@ -1,52 +1,44 @@
 FROM python:3.9-slim
 
-USER root:root
+ENV PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
 
-ENV PYTHONUNBUFFERED TRUE
+# (Optional) You don't need USER root:root; default is root
+# USER root
 
-RUN apt-get update --fix-missing && apt-get upgrade --yes
-
-RUN apt install -y wget \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    bash \
+    wget \
+    curl \
+    git \
+    gcc \
     g++ \
-    libsndfile1-dev \
+    ffmpeg \
     libsndfile1 \
     libsndfile1-dev \
-    gcc \
-    git \
-    vim \
-    curl \
     libsm6 \
     libxext6 \
     libfontconfig1 \
     libxrender1 \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
-    libgtk2.0-dev \
-    ffmpeg
+  && rm -rf /var/lib/apt/lists/*
 
-
+WORKDIR /app
 
 COPY scripts scripts
 COPY resources resources
 
 COPY app.sh .
-RUN chmod 777 app.sh
-RUN chmod +x app.sh
+RUN chmod +x /app/app.sh
 
+RUN python -m pip install --upgrade pip setuptools wheel
 
-RUN pip install --upgrade --force-reinstall pip
-RUN pip install --upgrade pip setuptools wheel
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
+# yt-dlp from master (ok, but consider pinning to a release for reproducibility)
+RUN pip install --no-cache-dir --force-reinstall \
+    https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
 
-COPY requirements.txt requirements.txt
-RUN pip install -r requirements.txt
-RUN pip install --force-reinstall https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
-
-
-RUN \
-    echo 'alias python="/usr/local/bin/python3"' >> /root/.bashrc && \
-    echo 'alias pip="/usr/local/bin/pip3"' >> /root/.bashrc
-
-
-SHELL ["/bin/bash", "-c", "source /root/.bashrc"]
 CMD ["./app.sh"]
