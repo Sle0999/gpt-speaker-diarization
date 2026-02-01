@@ -1,13 +1,17 @@
 FROM python:3.9-slim
 
-ENV PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
 
-# (Optional) You don't need USER root:root; default is root
-# USER root
+WORKDIR /app
 
+# -----------------------------
+# System Dependencies
+# -----------------------------
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     bash \
+    ca-certificates \
+    openssl \
     wget \
     curl \
     git \
@@ -24,21 +28,29 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     libglib2.0-0 \
   && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
+# -----------------------------
+# Copy Application Files
+# -----------------------------
 COPY scripts scripts
 COPY resources resources
 
 COPY app.sh .
 RUN chmod +x /app/app.sh
 
+# -----------------------------
+# Python Dependencies
+# -----------------------------
 RUN python -m pip install --upgrade pip setuptools wheel
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# yt-dlp from master (ok, but consider pinning to a release for reproducibility)
-RUN pip install --no-cache-dir --force-reinstall \
-    https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
+# -----------------------------
+# Install yt-dlp (stable PyPI version)
+# -----------------------------
+RUN pip install --no-cache-dir -U yt-dlp
 
+# -----------------------------
+# Start Container
+# -----------------------------
 CMD ["./app.sh"]
