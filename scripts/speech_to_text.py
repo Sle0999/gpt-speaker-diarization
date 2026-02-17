@@ -114,12 +114,58 @@ class Whisper:
             wav, sr = sf.read(io.BytesIO(wav_bytes))
         audio_regions = self.vad_audiotok(wav_bytes, chunk_seconds=chunk_seconds)
         wav_segments = []
+        min_duration_seconds = 0.25
         for r in audio_regions:
             start = r.meta.start
             end = r.meta.end
-            segment = wav[int(start * sr):int(end * sr)]
+            start_index = int(start * sr)
+            end_index = int(end * sr)
+            duration_seconds = max(0.0, end - start)
+            segment = wav[start_index:end_index]
+
+            if duration_seconds <= min_duration_seconds:
+                logging.info(
+                    "Skipping short chunk (duration=%.3fs <= %.2fs).",
+                    duration_seconds,
+                    min_duration_seconds,
+                )
+                continue
+
+            if len(segment) == 0:
+                logging.info(
+                    "Skipping empty chunk (duration=%.3fs, samples=0).",
+                    duration_seconds,
+                )
+                continue
+
             wav_segments.append(segment)
         return wav_segments
+
+    def transcribe_single_pass(self, filepath: str) -> str:
+        """
+        Transcribe an audio file as a single segment.
+
+        This path intentionally bypasses VAD chunking and reuses the same
+        per-segment transcription call used in chunked mode.
+
+        :param filepath: Path to the source audio file.
+        :return: Full transcript text.
+        """
+        temp_wav_path = None
+        try:
+            temp_wav_path = self._convert_to_wav_mono_16k(filepath)
+            wav, _ = sf.read(temp_wav_path)
+
+            if len(wav) == 0:
+                logging.warning(
+                    "Single-pass conversion produced empty audio; falling back to raw transcription call."
+                )
+                return self.transcribe_raw(filepath)
+
+            return self.transcribe(wav)
+        finally:
+            if temp_wav_path and os.path.exists(temp_wav_path):
+                os.remove(temp_wav_path)
 
     @retry_on_openai_errors(max_retry=7)
     def transcribe(self, audio_file):
