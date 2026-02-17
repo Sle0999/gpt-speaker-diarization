@@ -1,5 +1,7 @@
 import io
+import logging
 import os
+import subprocess
 import uuid
 
 import auditok
@@ -19,6 +21,7 @@ class Whisper:
         self,
         model_name: str = "gpt-4o-mini-transcribe",
         whisper_sample_rate: int = 16000,
+        max_chunk_seconds: int = 30,
     ):
         """
         Initialize the Whisper chatbot instance.
@@ -28,6 +31,7 @@ class Whisper:
         """
         self.model_name = model_name
         self.whisper_sample_rate = whisper_sample_rate
+        self.max_chunk_seconds = int(os.getenv("MAX_CHUNK_SECONDS", max_chunk_seconds))
         self.client = OpenAI()
 
     def vad_audiotok(self, audio_content):
@@ -43,11 +47,39 @@ class Whisper:
             ch=1,
             sw=2,
             min_dur=0.5,
-            max_dur=30,
+            max_dur=self.max_chunk_seconds,
             max_silence=0.3,
             energy_threshold=30
         )
         return audio_regions
+
+    def _convert_to_wav_mono_16k(self, filepath: str) -> str:
+        """
+        Convert an audio file to WAV mono 16 kHz format.
+
+        :param filepath: Path to the source audio file.
+        :return: Path to the converted WAV file.
+        """
+        root_path = get_project_root()
+        resources_path = f"{root_path}/resources/audios"
+        temp_wav_path = f"{resources_path}/{str(uuid.uuid4())}.wav"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-i",
+                filepath,
+                "-ar",
+                str(self.whisper_sample_rate),
+                "-ac",
+                "1",
+                "-y",
+                temp_wav_path,
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return temp_wav_path
 
     def audio_process(self, wav_path, is_byte=False):
         """
@@ -114,6 +146,45 @@ class Whisper:
                 file=audio_stream,
             )
         return response.text
+
+    def transcribe_chunked(self, filepath: str) -> str:
+        """
+        Transcribe an audio file in chunks and return a merged transcript.
+
+        Falls back to a single transcription call if chunking fails.
+
+        :param filepath: Path to the source audio file.
+        :return: Full transcript text.
+        """
+        temp_wav_path = None
+        try:
+            temp_wav_path = self._convert_to_wav_mono_16k(filepath)
+            wav_segments = self.audio_process(temp_wav_path)
+
+            if not wav_segments:
+                logging.warning("No audio chunks detected, falling back to single transcription call.")
+                return self.transcribe_raw(filepath)
+
+            logging.info(
+                "Starting chunked transcription with %s chunks (max chunk seconds: %s).",
+                len(wav_segments),
+                self.max_chunk_seconds,
+            )
+            transcript_chunks = []
+            for index, segment in enumerate(wav_segments, start=1):
+                logging.info("Transcribing chunk %s/%s.", index, len(wav_segments))
+                transcript_chunks.append(self.transcribe(segment))
+
+            return " ".join(chunk.strip() for chunk in transcript_chunks if chunk).strip()
+        except Exception as e:
+            logging.warning(
+                "Chunked transcription failed (%s). Falling back to single transcription call.",
+                e,
+            )
+            return self.transcribe_raw(filepath)
+        finally:
+            if temp_wav_path and os.path.exists(temp_wav_path):
+                os.remove(temp_wav_path)
 
 
 if __name__ == "__main__":
