@@ -19,7 +19,7 @@ class Whisper:
 
     def __init__(
         self,
-        model_name: str = "whisper-1",
+        model_name: str = "gpt-4o-transcribe",
         whisper_sample_rate: int = 16000,
         chunk_seconds: int = 120,
     ):
