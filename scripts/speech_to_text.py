@@ -21,7 +21,7 @@ class Whisper:
         self,
         model_name: str = "gpt-4o-mini-transcribe",
         whisper_sample_rate: int = 16000,
-        max_chunk_seconds: int = 30,
+        chunk_seconds: int = 120,
     ):
         """
         Initialize the Whisper chatbot instance.
@@ -31,10 +31,26 @@ class Whisper:
         """
         self.model_name = model_name
         self.whisper_sample_rate = whisper_sample_rate
-        self.max_chunk_seconds = int(os.getenv("MAX_CHUNK_SECONDS", max_chunk_seconds))
+        self.default_chunk_seconds = self._clamp_chunk_seconds(
+            os.getenv("CHUNK_SECONDS", chunk_seconds)
+        )
         self.client = OpenAI()
 
-    def vad_audiotok(self, audio_content):
+    @staticmethod
+    def _clamp_chunk_seconds(chunk_seconds) -> int:
+        """
+        Clamp chunk duration to a safe range.
+
+        :param chunk_seconds: Requested chunk duration.
+        :return: Chunk duration clamped to [10, 600].
+        """
+        try:
+            parsed_value = int(chunk_seconds)
+        except (TypeError, ValueError):
+            parsed_value = 120
+        return max(10, min(600, parsed_value))
+
+    def vad_audiotok(self, audio_content, chunk_seconds: int):
         """
         Perform voice activity detection using the audiotok package.
 
@@ -47,7 +63,7 @@ class Whisper:
             ch=1,
             sw=2,
             min_dur=0.5,
-            max_dur=self.max_chunk_seconds,
+            max_dur=chunk_seconds,
             max_silence=0.3,
             energy_threshold=30
         )
@@ -81,7 +97,7 @@ class Whisper:
         )
         return temp_wav_path
 
-    def audio_process(self, wav_path, is_byte=False):
+    def audio_process(self, wav_path, chunk_seconds: int, is_byte=False):
         """
         Process audio data, performing voice activity detection and segmenting the audio.
 
@@ -96,7 +112,7 @@ class Whisper:
         else:
             wav_bytes = wav_path
             wav, sr = sf.read(io.BytesIO(wav_bytes))
-        audio_regions = self.vad_audiotok(wav_bytes)
+        audio_regions = self.vad_audiotok(wav_bytes, chunk_seconds=chunk_seconds)
         wav_segments = []
         for r in audio_regions:
             start = r.meta.start
@@ -147,7 +163,7 @@ class Whisper:
             )
         return response.text
 
-    def transcribe_chunked(self, filepath: str) -> str:
+    def transcribe_chunked(self, filepath: str, chunk_seconds=None) -> str:
         """
         Transcribe an audio file in chunks and return a merged transcript.
 
@@ -157,31 +173,56 @@ class Whisper:
         :return: Full transcript text.
         """
         temp_wav_path = None
+        chosen_chunk_seconds = self._clamp_chunk_seconds(
+            self.default_chunk_seconds if chunk_seconds is None else chunk_seconds
+        )
         try:
             temp_wav_path = self._convert_to_wav_mono_16k(filepath)
-            wav_segments = self.audio_process(temp_wav_path)
+            wav_segments = self.audio_process(temp_wav_path, chunk_seconds=chosen_chunk_seconds)
 
             if not wav_segments:
                 logging.warning("No audio chunks detected, falling back to single transcription call.")
-                return self.transcribe_raw(filepath)
+                full_transcript = self.transcribe_raw(filepath)
+                logging.info(
+                    "Fallback transcription complete (chunk_seconds=%s, total_chunks=%s, transcript_chars=%s).",
+                    chosen_chunk_seconds,
+                    1,
+                    len(full_transcript),
+                )
+                return full_transcript
 
+            total_chunks = len(wav_segments)
             logging.info(
-                "Starting chunked transcription with %s chunks (max chunk seconds: %s).",
-                len(wav_segments),
-                self.max_chunk_seconds,
+                "Starting chunked transcription (chunk_seconds=%s, total_chunks=%s).",
+                chosen_chunk_seconds,
+                total_chunks,
             )
             transcript_chunks = []
             for index, segment in enumerate(wav_segments, start=1):
-                logging.info("Transcribing chunk %s/%s.", index, len(wav_segments))
+                logging.info("Transcribing chunk %s/%s.", index, total_chunks)
                 transcript_chunks.append(self.transcribe(segment))
 
-            return " ".join(chunk.strip() for chunk in transcript_chunks if chunk).strip()
+            full_transcript = " ".join(chunk.strip() for chunk in transcript_chunks if chunk).strip()
+            logging.info(
+                "Chunked transcription complete (chunk_seconds=%s, total_chunks=%s, transcript_chars=%s).",
+                chosen_chunk_seconds,
+                total_chunks,
+                len(full_transcript),
+            )
+            return full_transcript
         except Exception as e:
             logging.warning(
                 "Chunked transcription failed (%s). Falling back to single transcription call.",
                 e,
             )
-            return self.transcribe_raw(filepath)
+            full_transcript = self.transcribe_raw(filepath)
+            logging.info(
+                "Fallback transcription complete (chunk_seconds=%s, total_chunks=%s, transcript_chars=%s).",
+                chosen_chunk_seconds,
+                1,
+                len(full_transcript),
+            )
+            return full_transcript
         finally:
             if temp_wav_path and os.path.exists(temp_wav_path):
                 os.remove(temp_wav_path)

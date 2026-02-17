@@ -12,6 +12,7 @@ services:
     environment:
       - OPENAI_API_KEY=sk-***
       - NUM_WORKERS=4
+      - CHUNK_SECONDS=120
     volumes:
       - ./resources:/resources:rw
     ports:

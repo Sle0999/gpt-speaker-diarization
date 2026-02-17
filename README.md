@@ -44,6 +44,9 @@ pip install --force-reinstall https://github.com/yt-dlp/yt-dlp/archive/master.ta
 NOTE: set your OpenAI API key.  (source in docker-compose).
 
 
+Set `CHUNK_SECONDS=120` (default) or send `chunk_seconds` form field to override.
+
+
 ```
 
 docker-compose up -d
@@ -62,6 +65,7 @@ docker run -d \
     --name client_diarization \
     -e OPENAI_API_KEY=sk-*** \
     -e NUM_WORKERS=4 \
+    -e CHUNK_SECONDS=120 \
     -v $(pwd)/resources:/resources:rw \
     -p 8012:8000 \
     elmira96/gpt-speaker-diarization:v0.1.0

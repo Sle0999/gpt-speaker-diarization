@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .text_analysis import AI
@@ -43,7 +43,7 @@ app.add_middleware(
 logging.basicConfig(level=logging.INFO)
 
 
-def process_audio(audio_data: bytes, filename: str):
+def process_audio(audio_data: bytes, filename: str, chunk_seconds: int):
     """
     Process audio data and perform speaker diarization.
 
@@ -52,7 +52,7 @@ def process_audio(audio_data: bytes, filename: str):
     :return: Diarization result containing transcript and dialogue.
     """
     audio_output_path = write_audio(audio_data, filename)
-    transcript = whisper_api.transcribe_chunked(audio_output_path)
+    transcript = whisper_api.transcribe_chunked(audio_output_path, chunk_seconds=chunk_seconds)
     dialogue = openai_services.extract_dialogue(transcript)
     result = {
         "transcript": transcript,
@@ -61,7 +61,7 @@ def process_audio(audio_data: bytes, filename: str):
     return result
 
 
-def process_youtube_video(video_id: str):
+def process_youtube_video(video_id: str, chunk_seconds: int):
     """
     Process a YouTube video and perform speaker diarization.
 
@@ -69,7 +69,7 @@ def process_youtube_video(video_id: str):
     :return: Diarization result containing transcript and dialogue.
     """
     audio_output_path = downloader.download_video(video_id)
-    transcript = whisper_api.transcribe_chunked(audio_output_path)
+    transcript = whisper_api.transcribe_chunked(audio_output_path, chunk_seconds=chunk_seconds)
 
     dialogue = openai_services.extract_dialogue(transcript)
     result = {
@@ -80,7 +80,11 @@ def process_youtube_video(video_id: str):
 
 
 @app.post("/speaker-diarization", tags=["diarization_api"])
-async def speaker_diarization(audio_file: UploadFile = File(None), youtube_video_id: Optional[str] = None):
+async def speaker_diarization(
+    audio_file: UploadFile = File(None),
+    youtube_video_id: Optional[str] = Form(None),
+    chunk_seconds: Optional[str] = Form(None),
+):
     """
     Endpoint to perform speaker diarization on audio file or YouTube video.
 
@@ -89,13 +93,22 @@ async def speaker_diarization(audio_file: UploadFile = File(None), youtube_video
     :return: Diarization result containing transcript and dialogue.
     """
     try:
+        chosen_chunk_seconds = whisper_api._clamp_chunk_seconds(chunk_seconds)
+        logging.info("/speaker-diarization chunk_seconds=%s", chosen_chunk_seconds)
+
         if audio_file is not None:
             audio_data = await audio_file.read()
             filename = audio_file.filename
-            response = process_audio(audio_data, filename)
-        if youtube_video_id:
-            response = process_youtube_video(youtube_video_id)
+            response = process_audio(audio_data, filename, chunk_seconds=chosen_chunk_seconds)
+            return response
 
-        return response
+        if youtube_video_id:
+            response = process_youtube_video(youtube_video_id, chunk_seconds=chosen_chunk_seconds)
+            return response
+
+        raise HTTPException(status_code=400, detail="Provide either audio_file or youtube_video_id")
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f'/speaker_diarization:/500, {e}')
+        logging.exception(f"/speaker-diarization:/500, {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
