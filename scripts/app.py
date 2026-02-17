@@ -1,5 +1,4 @@
 import logging
-import time
 from typing import Optional
 
 from fastapi import FastAPI, File, UploadFile
@@ -7,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .text_analysis import AI
 from .speech_to_text import Whisper
-from .utils import get_file_size_in_mb, write_audio
+from .utils import write_audio
 from .video_manager import VideoDownloader
 
 # Create instances of various services and utilities
@@ -53,16 +52,7 @@ def process_audio(audio_data: bytes, filename: str):
     :return: Diarization result containing transcript and dialogue.
     """
     audio_output_path = write_audio(audio_data, filename)
-    file_size_mb = get_file_size_in_mb(audio_output_path)
-    if file_size_mb > 25:
-        wav_segments = whisper_api.audio_process(audio_output_path)
-        transcript = []
-        for segments in wav_segments:
-            transcript.append(whisper_api.transcribe(segments))
-            time.sleep(0.006)
-        transcript = ''.join(transcript)
-    else:
-        transcript = whisper_api.transcribe_raw(audio_output_path)
+    transcript = whisper_api.transcribe_chunked(audio_output_path)
     dialogue = openai_services.extract_dialogue(transcript)
     result = {
         "transcript": transcript,
@@ -79,17 +69,7 @@ def process_youtube_video(video_id: str):
     :return: Diarization result containing transcript and dialogue.
     """
     audio_output_path = downloader.download_video(video_id)
-    file_size_mb = get_file_size_in_mb(audio_output_path)
-
-    if file_size_mb > 25:
-        wav_segments = whisper_api.audio_process(audio_output_path)
-        transcript = []
-        for segments in wav_segments:
-            transcript.append(whisper_api.transcribe(segments))
-            time.sleep(0.006)
-        transcript = ''.join(transcript)
-    else:
-        transcript = whisper_api.transcribe_raw(audio_output_path)
+    transcript = whisper_api.transcribe_chunked(audio_output_path)
 
     dialogue = openai_services.extract_dialogue(transcript)
     result = {
