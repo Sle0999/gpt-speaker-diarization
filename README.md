@@ -45,6 +45,8 @@ NOTE: set your OpenAI API key.  (source in docker-compose).
 
 
 Set `CHUNK_SECONDS=120` (default) or send `chunk_seconds` form field to override.
+Use `chunk_seconds <= 0` (for example `0` or `-1`) to disable backend chunking when the client already chunks audio locally.
+`chunk_seconds` must be an integer when provided, otherwise the API returns HTTP 400.
 
 
 ```
